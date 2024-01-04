@@ -1,61 +1,73 @@
+#include "Encoder.h"
+#include "L298N.h"
+#include "S3-RGB.h"
 #include <Arduino.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <ElegantOTA.h>
+#include <PCF8574.h>
+#include <QuickPID.h>
 #include <SPIFFS.h>
 #include <TaskScheduler.h>
 #include <WebSerial.h>
 #include <WiFi.h>
 
-#include "L293N.h"
-#include "S3-RGB.h"
+#define DIR 4
+#define STEP 5
+
+float Kp = 1, Ki = 0, Kd = 0;
+bool turnloop = false;
+long pulse;
+unsigned long prevT, currT;
+double rpm[2];
+double error[2], integral[2], derivatif[2], lastError[2], PID[2], prev[2], curr[2], puls[2];
+int count;
+double mapped, k, pred;
+bool cases[9];
+double p;
+double errors, integrals, derivatifs, lastErrors;
+
+float Setpoint, Input, Output;
+QuickPID myPID(&Input, &Output, &Setpoint);
 
 /*
 note :: real
 in1 in2 motor1 : p5 p4
-in1 in2 en motor4 : 40 39  
+in1 in2 en motor4 : 40 39
 in1 in2 en motor3 : 41 42
 in1 in2 en motor2 : P3 13
 */
 
-#define UP 1
-#define DOWN 2
-#define LEFT 3
-#define RIGHT 4
-#define UP_LEFT 5
-#define UP_RIGHT 6
-#define DOWN_LEFT 7
-#define DOWN_RIGHT 8
-#define TURN_LEFT 9
-#define TURN_RIGHT 10
-#define FORK_UP 11
-#define FORK_DOWN 12
-#define STOP 0
-
-#define FRONT_RIGHT_MOTOR 0
-#define BACK_RIGHT_MOTOR 1
-#define FRONT_LEFT_MOTOR 2
-#define BACK_LEFT_MOTOR 3
-
-#define DIR 4
-#define STEP 5
-
-#define FORWARD 1
-#define BACKWARD -1
-
-bool turnloop = false;
+#define A1 1
+#define A2 2
+#define A3 3
+#define B1_ 4
+#define B2 5
+#define B3 6
+#define C1 7
+#define C2 8
+#define C3 9
 
 Scheduler ts;
 
 void forkloop();
+void forward(int jarak);
+long limit(long val);
+void Kanan();
+void Kiri();
 
 Task FORK(5, TASK_FOREVER, &forkloop);
 Task RGBT(100, TASK_FOREVER, &RGB_LED);
 
-L293N motor1(0, 40000, 8, 8, 18, 17);
-L293N motor2(1, 40000, 8, 9, 15, 16);
-L293N motor3(2, 40000, 8, 47, 41, 42);
-L293N motor4(3, 40000, 8, 21, 40, 39);
+L298N motor1(0, 40000, 8, 13, P6, P5, true);
+L298N motor2(1, 40000, 8, 47, 42, 41);
+L298N motor3(2, 40000, 8, 14, P4, P3, true);
+L298N motor4(3, 40000, 8, 21, 40, 39);
+
+Encoder enc1(motor1, 17, 18);
+Encoder enc2(motor2, 37, 38);
+Encoder enc3(motor3, 10, 9);
+Encoder enc4(motor4, 36, 35);
 
 const char *ssid = "ESP32";
 const char *password = "mimimimimi";
@@ -66,92 +78,32 @@ AsyncWebSocket ws("/ws");
 void processCarMovement(String inputValue) {
     WebSerial.printf("Got value as %s %d\n", inputValue.c_str(), inputValue.toInt());
     switch (inputValue.toInt()) {
-    case UP:
-        motor1.forward(255);
-        motor2.forward(255);
-        motor3.forward(255);
-        motor4.forward(255);
+    case A1:
+        cases[0] = true;
         break;
-
-    case DOWN:
-        motor1.backward(255);
-        motor2.backward(255);
-        motor3.backward(255);
-        motor4.backward(255);
+    case A2:
+        cases[1] = true;
         break;
-
-    case LEFT:
-        motor1.backward(255);
-        motor2.forward(255);
-        motor3.forward(255);
-        motor4.backward(255);
+    case A3:
+        cases[2] = true;
         break;
-
-    case RIGHT:
-        motor1.forward(255);
-        motor2.backward(255);
-        motor3.backward(255);
-        motor4.forward(255);
+    case B1_:
+        cases[3] = true;
         break;
-
-    case UP_LEFT:
-        motor1.stop();
-        motor2.forward(255);
-        motor3.forward(255);
-        motor4.stop();
+    case B2:
+        cases[4] = true;
         break;
-
-    case UP_RIGHT:
-        motor1.forward(255);
-        motor2.stop();
-        motor3.stop();
-        motor4.forward(255);
+    case B3:
+        cases[5] = true;
         break;
-
-    case DOWN_LEFT:
-	    motor1.backward(255);
-        motor2.stop();
-        motor3.stop();
-        motor4.backward(255);
+    case C1:
+        cases[6] = true;
         break;
-
-    case DOWN_RIGHT:
-	    motor1.stop();
-        motor2.backward(255);
-        motor3.backward(255);
-        motor4.stop();
+    case C2:
+        cases[7] = true;
         break;
-
-    case TURN_LEFT:
-	    motor1.backward(255);
-        motor2.forward(255);
-        motor3.backward(255);
-        motor4.forward(255);
-        break;
-
-    case TURN_RIGHT:
-	    motor1.forward(255);
-        motor2.backward(255);
-        motor3.forward(255);
-        motor4.backward(255);
-        break;
-
-    case STOP:
-        motor1.stop();
-        motor2.stop();
-        motor3.stop();
-        motor4.stop();
-        turnloop = false;
-        break;
-
-    case FORK_UP:
-        digitalWrite(DIR, HIGH);
-        turnloop = true;
-        break;
-
-    case FORK_DOWN:
-        digitalWrite(DIR, LOW);
-        turnloop = true;
+    case C3:
+        cases[8] = true;
         break;
 
     default:
@@ -211,6 +163,7 @@ void recvMsg(uint8_t *data, size_t len) {
 }
 
 void setup() {
+    millis();
     setup_led();
     Serial.begin(115200);
     pinMode(STEP, OUTPUT);
@@ -227,7 +180,7 @@ void setup() {
     Serial.println(IP);
 
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) { request->send(SPIFFS, "/homepage.html"); });
-    server.on("/control", HTTP_GET, [](AsyncWebServerRequest *request) { request->send(SPIFFS, "/control.html"); });
+    server.on("/control", HTTP_GET, [](AsyncWebServerRequest *request) { request->send(SPIFFS, "/mobile.html"); });
     server.onNotFound(handleNotFound);
 
     ws.onEvent(onWebSocketEvent);
@@ -239,13 +192,20 @@ void setup() {
     ElegantOTA.begin(&server);
 
     server.begin();
-    Serial.println("HTTP server started");
+    _pcf.begin();
     ts.addTask(FORK);
-	ts.addTask(RGBT);
-	RGBT.enable();
+    ts.addTask(RGBT);
+
+    RGBT.enable();
+
+    myPID.SetTunings(Kp, Ki, Kd);
+    myPID.SetMode(1);
+    myPID.SetOutputLimits(130, 240);
+    pred = 0;
 }
 
 void loop() {
+
     if ((turnloop == true) && (!FORK.isEnabled())) {
         FORK.enable();
     } else if ((turnloop == false) && (FORK.isEnabled())) {
@@ -255,6 +215,69 @@ void loop() {
     ws.cleanupClients();
     ts.execute();
     ElegantOTA.loop();
+
+    currT = millis();
+
+    if (cases[0]) {
+        forward(6000);
+        cases[0] = false;
+
+    } else if (cases[1]) {
+        forward(3000);
+        Kiri();
+        forward(1500);
+        Kanan();
+        forward(3000);
+        cases[1] = false;
+
+    } else if (cases[2]) {
+        forward(3000);
+        Kiri();
+        forward(3000);
+        Kanan();
+        forward(3000);
+        cases[2] = false;
+
+    } else if (cases[3]) {
+        forward(3000);
+        Kanan();
+        forward(1500);
+        Kiri();
+        forward(3000);
+        cases[3] = false;
+
+    } else if (cases[4]) {
+        forward(6000);
+        cases[4] = false;
+
+    } else if (cases[5]) {
+        forward(3000);
+        Kiri();
+        forward(1500);
+        Kanan();
+        forward(3000);
+        cases[5] = false;
+
+    } else if (cases[6]) {
+        forward(3000);
+        Kanan();
+        forward(3000);
+        Kiri();
+        forward(3000);
+        cases[6] = false;
+
+    } else if (cases[7]) {
+        forward(3000);
+        Kanan();
+        forward(1500);
+        Kiri();
+        forward(3000);
+        cases[7] = false;
+
+    } else if (cases[8]) {
+        forward(6000);
+        cases[8] = false;
+    }
 }
 
 void forkloop() {
@@ -262,4 +285,72 @@ void forkloop() {
     digitalWrite(STEP, state);
     WebSerial.println(state);
     state = !state;
+}
+
+void forward(int jarak) {
+    pulse = 0;
+    enc4._encoder.clearCount();
+    enc3._encoder.clearCount();
+    Setpoint = 50;
+
+    while (pulse <= jarak) {
+        currT = millis();
+        if (currT - prevT > 100) {
+            puls[0] = enc3._encoder.getCount();
+            puls[1] = enc4._encoder.getCount();
+            curr[0] = puls[0] - prev[0];
+            curr[1] = puls[1] - prev[1];
+
+            rpm[0] = ((curr[0] / (11 * 45 * 2)) * (60 / 0.1));
+            rpm[1] = ((curr[1] / (11 * 45 * 2)) * (60 / 0.1));
+
+            motor3.forward(205);
+            motor4.forward(200);
+
+            prev[0] = puls[0];
+            prev[1] = puls[1];
+            prevT = currT;
+
+            Serial.print(rpm[0]);
+            Serial.print("\t");
+            Serial.println(rpm[1]);
+        }
+        pulse = enc4._encoder.getCount();
+    }
+    motor3.stop();
+    motor4.stop();
+}
+
+void Kanan() {
+    pulse = 0;
+
+    enc4._encoder.clearCount();
+    enc3._encoder.clearCount();
+
+    while (pulse <= 600) {
+        motor3.forward(206);
+        motor4.backward(200);
+        pulse = enc4._encoder.getCount();
+    }
+    // delay(1000);
+    
+    motor3.stop();
+    motor4.stop();
+}
+
+void Kiri() {
+    motor3.backward(206);
+    motor4.forward(200);
+    delay(950);
+    motor3.stop();
+    motor4.stop();
+}
+
+long limit(long val) {
+    if (val > 255) {
+        val = 255;
+    } else if (val < 140) {
+        val = 255;
+    }
+    return val;
 }
