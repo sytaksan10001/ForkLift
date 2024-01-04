@@ -27,8 +27,8 @@ bool cases[9];
 double p;
 double errors, integrals, derivatifs, lastErrors;
 
-float Setpoint, Input, Output;
-QuickPID myPID(&Input, &Output, &Setpoint);
+// float Setpoint, Input, Output;
+// QuickPID myPID(&Input, &Output, &Setpoint);
 
 /*
 note :: real
@@ -198,10 +198,10 @@ void setup() {
 
     RGBT.enable();
 
-    myPID.SetTunings(Kp, Ki, Kd);
-    myPID.SetMode(1);
-    myPID.SetOutputLimits(130, 240);
-    pred = 0;
+    // myPID.SetTunings(Kp, Ki, Kd);
+    // myPID.SetMode(1);
+    // myPID.SetOutputLimits(130, 240);
+    // pred = 0;
 }
 
 void loop() {
@@ -220,6 +220,7 @@ void loop() {
 
     if (cases[0]) {
         forward(6000);
+        // Kiri();
         cases[0] = false;
 
     } else if (cases[1]) {
@@ -291,7 +292,7 @@ void forward(int jarak) {
     pulse = 0;
     enc4._encoder.clearCount();
     enc3._encoder.clearCount();
-    Setpoint = 50;
+    // Setpoint = 50;
 
     while (pulse <= jarak) {
         currT = millis();
@@ -327,30 +328,30 @@ void Kanan() {
     enc4._encoder.clearCount();
     enc3._encoder.clearCount();
 
-    while (pulse <= 600) {
+    while (pulse >= -700) {
         motor3.forward(206);
         motor4.backward(200);
         pulse = enc4._encoder.getCount();
     }
     // delay(1000);
-    
+
     motor3.stop();
     motor4.stop();
 }
 
 void Kiri() {
-    motor3.backward(206);
-    motor4.forward(200);
-    delay(950);
+    pulse = 0;
+
+    enc4._encoder.clearCount();
+    enc3._encoder.clearCount();
+
+    while (pulse <= 690) {
+        motor3.backward(206);
+        motor4.forward(200);
+        pulse = enc4._encoder.getCount();
+    }
+
+    // delay(950);
     motor3.stop();
     motor4.stop();
-}
-
-long limit(long val) {
-    if (val > 255) {
-        val = 255;
-    } else if (val < 140) {
-        val = 255;
-    }
-    return val;
 }
