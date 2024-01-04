@@ -15,8 +15,8 @@
 #define DIR 4
 #define STEP 5
 
-float Kp = 1, Ki = 0, Kd = 0;
-bool turnloop = false;
+// float Kp = 1, Ki = 0, Kd = 0;
+// bool turnloop = false;
 long pulse;
 unsigned long prevT, currT;
 double rpm[2];
@@ -206,11 +206,11 @@ void setup() {
 
 void loop() {
 
-    if ((turnloop == true) && (!FORK.isEnabled())) {
-        FORK.enable();
-    } else if ((turnloop == false) && (FORK.isEnabled())) {
-        FORK.disable();
-    }
+    // if ((turnloop == true) && (!FORK.isEnabled())) {
+    //     FORK.enable();
+    // } else if ((turnloop == false) && (FORK.isEnabled())) {
+    //     FORK.disable();
+    // }
 
     ws.cleanupClients();
     ts.execute();
